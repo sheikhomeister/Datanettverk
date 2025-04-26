@@ -6,7 +6,7 @@ Created on Sat Apr 26 12:58:57 2025
 @author: sheikhomeister
 """
 
-# Step 1: Setup and imports 
+# Setup and imports 
 import socket   # for network communication
 import sys      # for command-line arguments
 import struct   # for packing/unpacking data
@@ -14,7 +14,7 @@ import time     # for measuring throughput
 import os       # for getting file size
 
 
-# Step 2: Parse command-line args
+# Parse command-line args
 if __name__ == "__main__":
     args = sys.argv
 
@@ -41,14 +41,14 @@ if __name__ == "__main__":
         sys.exit(1)
 
 
-# Step 3: Create and bind socket
+# Create and bind socket
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 if mode == "-s":
     sock.bind((ip_address, port))
     print(f"Server is ready and listening at {ip_address}:{port}")
 
-# Step 4: Build packet format
+# Build packet format
 SYN = 0x1
 ACK = 0x2
 FIN = 0x4
@@ -64,7 +64,7 @@ def parse_packet(packet):
     data = packet[8:8+data_length]
     return seq_num, flags, data
 
-# Step 5-6: Main Logic
+# Main Logic
 if mode == "-s":
     # ====== SERVER CODE ======
 
@@ -87,7 +87,6 @@ if mode == "-s":
         if flags & ACK:
             print("Server: Connection established with", client_address)
 
-    # Now ready to receive file
     output_file = open('received_file.txt', 'wb')
     expected_seq = 0
 
@@ -113,7 +112,6 @@ if mode == "-s":
             expected_seq += 1
         else:
             print(f"Server: Unexpected packet {seq_num}, expected {expected_seq}")
-            # Optional: re-ACK last good packet (not required now)
 
 elif mode == "-c":
     # ====== CLIENT CODE ======
@@ -168,7 +166,7 @@ elif mode == "-c":
     sock.sendto(fin_packet, (ip_address, port))
     print("Client: Sent FIN")
 
-    # (Optional) wait for FIN-ACK
+    # Waiting for FIN-ACK
     try:
         fin_ack_packet, _ = sock.recvfrom(4096)
         seq_num, flags, data = parse_packet(fin_ack_packet)
