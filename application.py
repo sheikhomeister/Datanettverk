@@ -13,7 +13,6 @@ import struct   # for packing/unpacking data
 import time     # for measuring throughput
 import os       # for getting file size
 
-
 # Parse command-line args
 if __name__ == "__main__":
     args = sys.argv
@@ -21,7 +20,7 @@ if __name__ == "__main__":
     if len(args) < 5:
         print("Usage:")
         print("Server: python3 application.py -s -i <IP> -p <PORT>")
-        print("Client: python3 application.py -c -i <IP> -p <PORT> -f <FILENAME>")
+        print("Client: python3 application.py -c -i <IP> -p <PORT> -f <FILENAME> [-w <WINDOW_SIZE>]")
         sys.exit(1)
 
     mode = args[1]
@@ -34,12 +33,22 @@ if __name__ == "__main__":
             sys.exit(1)
         filename = args[7]
         print(f"Client mode: Sending {filename} to {ip_address}:{port}")
+
+        # Read window size if provided
+        window_size = 1  # Default is 1
+        if "-w" in args:
+            window_size_index = args.index("-w") + 1
+            if window_size_index < len(args):
+                window_size = int(args[window_size_index])
+            print(f"Window size set to {window_size}")
+        else:
+            print("Using default window size = 1")
+
     elif mode == "-s":
         print(f"Server mode: Listening on {ip_address}:{port}")
     else:
         print("Unknown mode. Use -s for server or -c for client.")
         sys.exit(1)
-
 
 # Create and bind socket
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -48,7 +57,7 @@ if mode == "-s":
     sock.bind((ip_address, port))
     print(f"Server is ready and listening at {ip_address}:{port}")
 
-# Build packet format
+# Packet format
 SYN = 0x1
 ACK = 0x2
 FIN = 0x4
@@ -66,7 +75,6 @@ def parse_packet(packet):
 
 # Main Logic
 if mode == "-s":
-    # ====== SERVER CODE ======
 
     # Wait for SYN
     print("Server: Waiting for SYN...")
@@ -114,7 +122,6 @@ if mode == "-s":
             print(f"Server: Unexpected packet {seq_num}, expected {expected_seq}")
 
 elif mode == "-c":
-    # ====== CLIENT CODE ======
 
     # Start handshake
     print("Client: Sending SYN...")
@@ -140,26 +147,34 @@ elif mode == "-c":
 
     with open(filename, 'rb') as f:
         seq_num = 0
-        while True:
-            data = f.read(1000)
-            if not data:
-                break
+        window = []
 
-            packet = create_packet(seq_num, 0, data)
-            sock.sendto(packet, (ip_address, port))
-            print(f"Client: Sent packet {seq_num}")
+        while True:
+            # Fill the window
+            while len(window) < window_size:
+                data = f.read(1000)
+                if not data:
+                    break
+                packet = create_packet(seq_num, 0, data)
+                sock.sendto(packet, (ip_address, port))
+                print(f"Client: Sent packet {seq_num}")
+                window.append((seq_num, packet))
+                seq_num += 1
+
+            if not window:
+                break
 
             sock.settimeout(2)
             try:
                 ack_packet, _ = sock.recvfrom(4096)
                 ack_seq_num, ack_flags, ack_data = parse_packet(ack_packet)
-                if ack_flags & ACK and ack_seq_num == seq_num:
-                    print(f"Client: Received ACK for packet {seq_num}")
-                    seq_num += 1
-                else:
-                    print("Client: Wrong ACK, resending packet...")
+                if ack_flags & ACK:
+                    print(f"Client: Received ACK for packet {ack_seq_num}")
+                    window = [pkt for pkt in window if pkt[0] != ack_seq_num]
             except socket.timeout:
-                print("Client: Timeout, resending packet...")
+                print("Client: Timeout, resending window...")
+                for resend_seq_num, resend_packet in window:
+                    sock.sendto(resend_packet, (ip_address, port))
 
     # After file is sent, send FIN
     fin_packet = create_packet(seq_num, FIN, b'')
