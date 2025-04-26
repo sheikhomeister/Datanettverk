@@ -1,4 +1,4 @@
-Step-by-step on how to run application.py on mininet
+Step-by-step on how to run mininet
 
 before we start running,dont forget to clone these files:
   - application.py
