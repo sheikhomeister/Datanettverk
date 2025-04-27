@@ -136,6 +136,8 @@ elif mode == "-c":
     with open(filename, 'rb') as f:
         seq_num = 0
         window = []
+        sent_in_window = []   # NEW: Track sent packets
+        acked_in_window = []  # NEW: Track received ACKs
 
         while True:
             while len(window) < window_size:
@@ -146,6 +148,7 @@ elif mode == "-c":
                 sock.sendto(packet, (ip_address, port))
                 print(f"Client: Sent packet {seq_num}")
                 window.append((seq_num, packet))
+                sent_in_window.append(seq_num)
                 seq_num += 1
 
             if not window:
@@ -157,7 +160,16 @@ elif mode == "-c":
                 ack_seq_num, ack_flags, ack_data = parse_packet(ack_packet)
                 if ack_flags & ACK:
                     print(f"Client: Received ACK for packet {ack_seq_num}")
+                    acked_in_window.append(ack_seq_num)
                     window = [pkt for pkt in window if pkt[0] != ack_seq_num]
+
+                    if len(acked_in_window) == window_size:
+                        print(f"--- Window complete ---")
+                        print(f"Sent packets: {sent_in_window}")
+                        print(f"Received ACKs: {acked_in_window}")
+                        sent_in_window = []
+                        acked_in_window = []
+
             except socket.timeout:
                 print("Client: Timeout, resending window...")
                 for resend_seq_num, resend_packet in window:
