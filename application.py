@@ -2,16 +2,15 @@
 # -*- coding: utf-8 -*-
 """
 Created on Sat Apr 26 12:58:57 2025
-
 @author: sheikhomeister
 """
 
-# Setup and imports 
-import socket   # for network communication
-import sys      # for command-line arguments
-import struct   # for packing/unpacking data
-import time     # for measuring throughput
-import os       # for getting file size
+# Setup and imports
+import socket
+import sys
+import struct
+import time
+import os
 
 # Parse command-line args
 if __name__ == "__main__":
@@ -35,7 +34,7 @@ if __name__ == "__main__":
         print(f"Client mode: Sending {filename} to {ip_address}:{port}")
 
         # Read window size if provided
-        window_size = 1  # Default is 1
+        window_size = 1  # Default window size
         if "-w" in args:
             window_size_index = args.index("-w") + 1
             if window_size_index < len(args):
