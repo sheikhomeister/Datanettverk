@@ -75,21 +75,17 @@ def parse_packet(packet):
 
 # Main Logic
 if mode == "-s":
-
-    # Wait for SYN
+    # Server side
     print("Server: Waiting for SYN...")
     packet, client_address = sock.recvfrom(4096)
     seq_num, flags, data = parse_packet(packet)
 
     if flags & SYN:
         print("Server: Received SYN")
-
-        # Send SYN-ACK
         response = create_packet(seq_num=0, flags=SYN | ACK, data=b'')
         sock.sendto(response, client_address)
         print("Server: Sent SYN-ACK")
 
-        # Wait for ACK
         packet, client_address = sock.recvfrom(4096)
         seq_num, flags, data = parse_packet(packet)
         if flags & ACK:
@@ -105,7 +101,6 @@ if mode == "-s":
         if flags & FIN:
             print("Server: Received FIN, closing file...")
             output_file.close()
-            # Send FIN-ACK
             fin_ack = create_packet(seq_num, FIN | ACK, b'')
             sock.sendto(fin_ack, client_address)
             print("Server: Sent FIN-ACK")
@@ -114,7 +109,6 @@ if mode == "-s":
         if seq_num == expected_seq:
             output_file.write(data)
             print(f"Server: Received packet {seq_num}, wrote data")
-            # Send ACK
             ack_packet = create_packet(seq_num, ACK, b'')
             sock.sendto(ack_packet, client_address)
             expected_seq += 1
@@ -122,19 +116,15 @@ if mode == "-s":
             print(f"Server: Unexpected packet {seq_num}, expected {expected_seq}")
 
 elif mode == "-c":
-
-    # Start handshake
+    # Client side
     print("Client: Sending SYN...")
     syn_packet = create_packet(seq_num=0, flags=SYN, data=b'')
     sock.sendto(syn_packet, (ip_address, port))
 
-    # Wait for SYN-ACK
     packet, server_address = sock.recvfrom(4096)
     seq_num, flags, data = parse_packet(packet)
     if flags & SYN and flags & ACK:
         print("Client: Received SYN-ACK")
-
-        # Send final ACK
         ack_packet = create_packet(seq_num=0, flags=ACK, data=b'')
         sock.sendto(ack_packet, server_address)
         print("Client: Connection established with", server_address)
@@ -142,7 +132,6 @@ elif mode == "-c":
         print("Client: Handshake failed.")
         sys.exit(1)
 
-    # Start sending file
     start_time = time.time()
 
     with open(filename, 'rb') as f:
@@ -150,7 +139,6 @@ elif mode == "-c":
         window = []
 
         while True:
-            # Fill the window
             while len(window) < window_size:
                 data = f.read(1000)
                 if not data:
@@ -176,12 +164,10 @@ elif mode == "-c":
                 for resend_seq_num, resend_packet in window:
                     sock.sendto(resend_packet, (ip_address, port))
 
-    # After file is sent, send FIN
     fin_packet = create_packet(seq_num, FIN, b'')
     sock.sendto(fin_packet, (ip_address, port))
     print("Client: Sent FIN")
 
-    # Waiting for FIN-ACK
     try:
         fin_ack_packet, _ = sock.recvfrom(4096)
         seq_num, flags, data = parse_packet(fin_ack_packet)
@@ -192,11 +178,10 @@ elif mode == "-c":
 
     end_time = time.time()
 
-    # Calculate throughput
     file_size_bytes = os.path.getsize(filename)
     file_size_bits = file_size_bytes * 8
     time_taken = end_time - start_time
     throughput = file_size_bits / time_taken
 
     print(f"Client: File transfer complete.")
-    print(f"Client: Throughput = {throughput:.2f} bits/second")
+    print(f"Client: Throughput = {throughput / 1_000_000:.2f} Mbit/s")
