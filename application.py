@@ -5,26 +5,27 @@ Created on Sat Apr 26 12:58:57 2025
 @author: sheikhomeister
 """
 
-# Setup and imports
 import socket
 import sys
 import struct
 import time
 import os
+import random
 
-# Parse command-line args
 if __name__ == "__main__":
     args = sys.argv
 
     if len(args) < 5:
         print("Usage:")
-        print("Server: python3 application.py -s -i <IP> -p <PORT>")
+        print("Server: python3 application.py -s -i <IP> -p <PORT> [-d]")
         print("Client: python3 application.py -c -i <IP> -p <PORT> -f <FILENAME> [-w <WINDOW_SIZE>]")
         sys.exit(1)
 
     mode = args[1]
     ip_address = args[3]
     port = int(args[5])
+
+    discard_mode = False
 
     if mode == "-c":
         if len(args) < 8:
@@ -33,7 +34,7 @@ if __name__ == "__main__":
         filename = args[7]
         print(f"Client mode: Sending {filename} to {ip_address}:{port}")
 
-        window_size = 1  # Default window size
+        window_size = 1
         if "-w" in args:
             window_size_index = args.index("-w") + 1
             if window_size_index < len(args):
@@ -42,24 +43,24 @@ if __name__ == "__main__":
         else:
             print("Using default window size = 1")
 
-        # Apply window limit: maximum window is 15
         effective_window_size = min(window_size, 15)
         print(f"Effective window size = {effective_window_size}")
 
     elif mode == "-s":
         print(f"Server mode: Listening on {ip_address}:{port}")
+        if "-d" in args:
+            discard_mode = True
+            print("Server: Discard mode enabled (dropping 1 packet)")
     else:
         print("Unknown mode. Use -s for server or -c for client.")
         sys.exit(1)
 
-# Create and bind socket
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 if mode == "-s":
     sock.bind((ip_address, port))
     print(f"Server is ready and listening at {ip_address}:{port}")
 
-# Packet format
 SYN = 0x1
 ACK = 0x2
 FIN = 0x4
@@ -75,7 +76,6 @@ def parse_packet(packet):
     data = packet[8:8+data_length]
     return seq_num, flags, data
 
-# Main Logic
 if mode == "-s":
     print("Server: Waiting for SYN...")
     packet, client_address = sock.recvfrom(4096)
@@ -94,6 +94,7 @@ if mode == "-s":
 
     output_file = open('received_file.txt', 'wb')
     expected_seq = 0
+    dropped = False
 
     while True:
         packet, client_address = sock.recvfrom(4096)
@@ -111,6 +112,10 @@ if mode == "-s":
             output_file.write(data)
             print(f"Server: Received packet {seq_num}, wrote data")
             ack_packet = create_packet(seq_num, ACK, b'')
+            if discard_mode and not dropped and random.random() < 0.2:
+                print(f"Server: Dropping ACK for packet {seq_num}")
+                dropped = True
+                continue
             sock.sendto(ack_packet, client_address)
             expected_seq += 1
         else:
