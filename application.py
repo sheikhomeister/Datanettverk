@@ -64,12 +64,10 @@ SYN = 0x1
 ACK = 0x2
 FIN = 0x4
 
-
 def create_packet(seq_num, flags, data):
     data_length = len(data)
     header = struct.pack('!IHH', seq_num, flags, data_length)
     return header + data
-
 
 def parse_packet(packet):
     header = packet[:8]
