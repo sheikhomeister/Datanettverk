@@ -11,7 +11,6 @@ import sys
 import struct
 import time
 import os
-import random  # NEW: For discarding packets
 
 # Parse command-line args
 if __name__ == "__main__":
@@ -19,15 +18,13 @@ if __name__ == "__main__":
 
     if len(args) < 5:
         print("Usage:")
-        print("Server: python3 application.py -s -i <IP> -p <PORT> [-d]")
+        print("Server: python3 application.py -s -i <IP> -p <PORT>")
         print("Client: python3 application.py -c -i <IP> -p <PORT> -f <FILENAME> [-w <WINDOW_SIZE>]")
         sys.exit(1)
 
     mode = args[1]
     ip_address = args[3]
     port = int(args[5])
-
-    discard_mode = False
 
     if mode == "-c":
         if len(args) < 8:
@@ -36,20 +33,21 @@ if __name__ == "__main__":
         filename = args[7]
         print(f"Client mode: Sending {filename} to {ip_address}:{port}")
 
-        window_size = 1
+        window_size = 1  # Default window size
         if "-w" in args:
             window_size_index = args.index("-w") + 1
             if window_size_index < len(args):
                 window_size = int(args[window_size_index])
-            print(f"Window size set to {window_size}")
+                print(f"Requested window size = {window_size}")
         else:
             print("Using default window size = 1")
 
+        # Apply window limit: maximum window is 15
+        effective_window_size = min(window_size, 15)
+        print(f"Effective window size = {effective_window_size}")
+
     elif mode == "-s":
         print(f"Server mode: Listening on {ip_address}:{port}")
-        if "-d" in args:
-            discard_mode = True
-            print("Server will randomly discard 1 packet.")
     else:
         print("Unknown mode. Use -s for server or -c for client.")
         sys.exit(1)
@@ -66,10 +64,12 @@ SYN = 0x1
 ACK = 0x2
 FIN = 0x4
 
+
 def create_packet(seq_num, flags, data):
     data_length = len(data)
     header = struct.pack('!IHH', seq_num, flags, data_length)
     return header + data
+
 
 def parse_packet(packet):
     header = packet[:8]
@@ -96,7 +96,6 @@ if mode == "-s":
 
     output_file = open('received_file.txt', 'wb')
     expected_seq = 0
-    discarded_packet = False
 
     while True:
         packet, client_address = sock.recvfrom(4096)
@@ -109,11 +108,6 @@ if mode == "-s":
             sock.sendto(fin_ack, client_address)
             print("Server: Sent FIN-ACK")
             break
-
-        if discard_mode and not discarded_packet and random.random() < 0.1:
-            print(f"Server: Randomly discarding packet {seq_num}")
-            discarded_packet = True
-            continue
 
         if seq_num == expected_seq:
             output_file.write(data)
@@ -149,7 +143,7 @@ elif mode == "-c":
         acked_in_window = []
 
         while True:
-            while len(window) < window_size:
+            while len(window) < effective_window_size:
                 data = f.read(1000)
                 if not data:
                     break
@@ -172,13 +166,12 @@ elif mode == "-c":
                     acked_in_window.append(ack_seq_num)
                     window = [pkt for pkt in window if pkt[0] != ack_seq_num]
 
-                    if len(acked_in_window) == window_size:
+                    if len(acked_in_window) == effective_window_size:
                         print("--- Window complete ---")
                         print(f"Sent packets: {sent_in_window}")
                         print(f"Received ACKs: {acked_in_window}")
                         sent_in_window = []
                         acked_in_window = []
-
             except socket.timeout:
                 print("Client: Timeout, resending window...")
                 for resend_seq_num, resend_packet in window:
