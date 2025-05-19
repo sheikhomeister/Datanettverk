@@ -9,6 +9,8 @@ Implements a reliable file transfer protocol (DRTP) over UDP.
 Features:
 - Client and Server modes.
 - Argument parsing using argparse.
+  - Global -i IP and -p PORT options.
+  - Subcommands for server and client modes.
 - 8-byte DRTP header: SeqNum (2B), AckNum (2B), Flags (2B), Window (2B).
 - Flags: SYN, ACK, FIN, RST.
 - Connection establishment (3-way handshake).
@@ -31,36 +33,36 @@ import argparse
 #   Flags (2 bytes, unsigned short, !H)
 #   Receiver Window (2 bytes, unsigned short, !H)
 # Total = 8 bytes
-HEADER_FORMAT = '!HHHH'
-HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
-MAX_PAYLOAD_SIZE = 1000  # Max bytes of data per packet
-MAX_SEQ_NUM = 65535 # Maximum sequence number (2^16 - 1)
+header_format = '!HHHH'
+header_size = struct.calcsize(header_format)
+max_payload_size = 1000  # Max bytes of data per packet
+max_seq_num = 65535 # Maximum sequence number (2^16 - 1)
 
 # DRTP Flags (fit within the 2-byte flags field)
 # Using distinct bit positions
-SYN_FLAG = 1 << 0  # 0000000000000001
-ACK_FLAG = 1 << 1  # 0000000000000010
-FIN_FLAG = 1 << 2  # 0000000000000100
-RST_FLAG = 1 << 3  # 0000000000001000 (Reset flag)
+syn_flag = 1 << 0  # 0000000000000001
+ack_flag = 1 << 1  # 0000000000000010
+fin_flag = 1 << 2  # 0000000000000100
+rst_flag = 1 << 3  # 0000000000001000 (Reset flag)
 
-DEFAULT_TIMEOUT = 0.4  # 400 ms as per guidelines
-DEFAULT_RECEIVER_WINDOW = 10  # Example default receiver window (in packets)
+default_timeout = 0.4  # 400 ms as per guidelines
+default_receiver_window = 10  # Example default receiver window (in packets)
 
 def create_packet(seq_num, ack_num, flags, window_size, payload=b''):
     """Creates a DRTP packet."""
     # Ensure sequence and ack numbers are within 16-bit range
-    seq_num &= MAX_SEQ_NUM
-    ack_num &= MAX_SEQ_NUM
-    header = struct.pack(HEADER_FORMAT, seq_num, ack_num, flags, window_size)
+    seq_num &= max_seq_num
+    ack_num &= max_seq_num
+    header = struct.pack(header_format, seq_num, ack_num, flags, window_size)
     return header + payload
 
 def parse_packet(packet):
     """Parses a DRTP packet."""
-    if len(packet) < HEADER_SIZE:
+    if len(packet) < header_size:
         return None, None, None, None, None # Packet too short
-    header = packet[:HEADER_SIZE]
-    payload = packet[HEADER_SIZE:]
-    seq_num, ack_num, flags, window_size = struct.unpack(HEADER_FORMAT, header)
+    header = packet[:header_size]
+    payload = packet[header_size:]
+    seq_num, ack_num, flags, window_size = struct.unpack(header_format, header)
     return seq_num, ack_num, flags, window_size, payload
 
 def run_server(ip_address, port, discard_mode):
@@ -75,128 +77,126 @@ def run_server(ip_address, port, discard_mode):
         # Server state
         client_address = None
         connection_active = False
-        expected_seq_num = 0 # Server expects client's first data packet with seq_num 1 after handshake
-        server_isn = random.randint(0, MAX_SEQ_NUM) # Server's initial sequence number
+        expected_seq_num = 0 
+        server_isn = random.randint(0, max_seq_num) 
 
         output_file = None
         packets_dropped_for_test = 0
 
         while True:
             try:
-                packet, addr = sock.recvfrom(HEADER_SIZE + MAX_PAYLOAD_SIZE)
+                packet, addr = sock.recvfrom(header_size + max_payload_size)
                 
                 parsed = parse_packet(packet)
-                if parsed[0] is None: # Invalid packet
+                if parsed[0] is None: 
                     print(f"Server: Received invalid packet from {addr}")
                     continue
                 
                 r_seq, r_ack, r_flags, r_wnd, r_payload = parsed
 
                 if not connection_active:
-                    if r_flags & SYN_FLAG:
+                    if r_flags & syn_flag:
                         client_address = addr
                         print(f"Server: Received SYN from {client_address} (Seq={r_seq}, Wnd={r_wnd})")
                         
-                        # Client's ISN is r_seq. Server expects data starting from r_seq + 1
-                        # For simplicity, let's assume data starts at 1 after handshake.
-                        # The assignment says "data can start with sequence 1" (page 15).
-                        # Let's assume client's first data packet will be seq 1.
-                        expected_seq_num = 1 # After handshake, expect data packet 1
+                        # Data sequence numbers start at 1 after handshake
+                        expected_seq_num = 1 
                         
-                        # Send SYN-ACK
-                        server_seq_num = server_isn
-                        ack_to_client_isn = r_seq # Acknowledge the client's ISN
+                        server_seq_num = server_isn # Server's ISN for SYN-ACK
+                        ack_to_client_isn = r_seq  # Acknowledge client's SYN sequence
                         
                         syn_ack_packet = create_packet(
                             seq_num=server_seq_num,
-                            ack_num=ack_to_client_isn, # Acknowledging client's SYN seq num
-                            flags=SYN_FLAG | ACK_FLAG,
-                            window_size=DEFAULT_RECEIVER_WINDOW
+                            ack_num=ack_to_client_isn, 
+                            flags=syn_flag | ack_flag,
+                            window_size=default_receiver_window
                         )
                         sock.sendto(syn_ack_packet, client_address)
                         print(f"Server: Sent SYN-ACK (Seq={server_seq_num}, Ack={ack_to_client_isn}) to {client_address}")
                     
-                    elif r_flags & ACK_FLAG and client_address == addr:
+                    elif r_flags & ack_flag and client_address == addr:
                         # This ACK is for our SYN-ACK
                         # Client's ACK should acknowledge server_isn
                         if r_ack == server_seq_num : # Client ACKs server's SYN
                             print(f"Server: Received ACK for SYN-ACK (Ack={r_ack}). Connection established with {client_address}.")
                             connection_active = True
                             # Prepare to receive file
-                            # Let's use a fixed name or derive from client info if possible
                             filename = f"received_file_from_{client_address[0]}_{client_address[1]}.dat"
                             output_file = open(filename, 'wb')
                             print(f"Server: Receiving file as {filename}")
                         else:
                             print(f"Server: Received ACK with wrong ack_num {r_ack}, expected {server_seq_num}")
                 
-                elif connection_active and client_address == addr:
-                    if r_flags & FIN_FLAG:
+                elif connection_active and client_address == addr: # Connection is active
+                    if r_flags & fin_flag:
                         print(f"Server: Received FIN (Seq={r_seq}) from {client_address}")
-                        if output_file:
+                        if output_file and not output_file.closed:
                             output_file.close()
                             print("Server: File closed.")
                         
                         # Send FIN-ACK
+                        # Server can use a new seq num or increment its ISN for its part of FIN exchange
+                        fin_ack_seq_num = (server_isn + 1) & max_seq_num 
                         fin_ack_packet = create_packet(
-                            seq_num=server_isn + 1, # Server can use a new seq num or increment
+                            seq_num=fin_ack_seq_num, 
                             ack_num=r_seq,      # Acknowledge the FIN's sequence number
-                            flags=FIN_FLAG | ACK_FLAG,
-                            window_size=DEFAULT_RECEIVER_WINDOW
+                            flags=fin_flag | ack_flag,
+                            window_size=default_receiver_window
                         )
                         sock.sendto(fin_ack_packet, client_address)
-                        print(f"Server: Sent FIN-ACK. Closing connection with {client_address}.")
+                        print(f"Server: Sent FIN-ACK (Seq={fin_ack_seq_num}, Ack={r_seq}). Closing connection with {client_address}.")
                         
-                        # Reset for next connection
+                        # Reset for next potential connection
                         connection_active = False
                         client_address = None
                         output_file = None
-                        expected_seq_num = 1 # Reset for a new potential handshake
+                        expected_seq_num = 1 
                         packets_dropped_for_test = 0
-                        continue
+                        continue # Go to top of while loop to wait for new SYN
 
-                    # Data packet
-                    elif not (r_flags & SYN_FLAG or r_flags & FIN_FLAG): # Regular data packet
+                    # Data packet handling (not SYN or FIN)
+                    elif not (r_flags & syn_flag or r_flags & fin_flag): 
                         if r_seq == expected_seq_num:
                             if output_file:
                                 output_file.write(r_payload)
-                            print(f"Server: Received DATA (Seq={r_seq}), Len={len(r_payload)}. Wrote to file.")
+                            # print(f"Server: Received DATA (Seq={r_seq}), Len={len(r_payload)}. Wrote to file.") # Verbose
                             
                             # Send ACK for received data
-                            ack_packet = create_packet(
-                                seq_num=server_isn + 1, # Server's current sequence (can be static for pure ACKs)
-                                ack_num=r_seq,          # Acknowledge the data packet's sequence number
-                                flags=ACK_FLAG,
-                                window_size=DEFAULT_RECEIVER_WINDOW
+                            # Server's ACK packet seq_num can be static or incremented. ack_num acknowledges received data.
+                            ack_data_packet = create_packet(
+                                seq_num=(server_isn + 1) & max_seq_num, 
+                                ack_num=r_seq,          
+                                flags=ack_flag,
+                                window_size=default_receiver_window
                             )
                             
                             if discard_mode and packets_dropped_for_test == 0 and random.random() < 0.2: # Drop first ACK sometimes
                                 print(f"Server: DISCARDING ACK for packet {r_seq} (Test Drop)")
-                                packets_dropped_for_test += 1
+                                packets_dropped_for_test += 1 # Only drop one for this test
                             else:
-                                sock.sendto(ack_packet, client_address)
-                                # print(f"Server: Sent ACK for data packet {r_seq}")
+                                sock.sendto(ack_data_packet, client_address)
+                                # print(f"Server: Sent ACK for data packet {r_seq}") # Verbose
                             
-                            expected_seq_num = (expected_seq_num + 1) & MAX_SEQ_NUM
-                            if expected_seq_num == 0: expected_seq_num = 1 # Wrap around, avoid 0 for data
+                            expected_seq_num = (expected_seq_num + 1)
+                            if expected_seq_num > max_seq_num: expected_seq_num = 1 # Wrap around for data seq
                         
-                        elif r_seq < expected_seq_num:
-                            # Duplicate of an old packet, re-ACK it
-                            print(f"Server: Received duplicate DATA (Seq={r_seq}), expected {expected_seq_num}. Re-sending ACK.")
-                            ack_packet = create_packet(
-                                seq_num=server_isn + 1,
-                                ack_num=r_seq,
-                                flags=ACK_FLAG,
-                                window_size=DEFAULT_RECEIVER_WINDOW
+                        elif r_seq < expected_seq_num: # Received an old, already processed packet
+                            print(f"Server: Received duplicate DATA (Seq={r_seq}), expected {expected_seq_num}. Re-sending ACK for {r_seq}.")
+                            # Re-send ACK for the old packet
+                            ack_old_data_packet = create_packet(
+                                seq_num=(server_isn + 1) & max_seq_num,
+                                ack_num=r_seq, # ACK the sequence number of the duplicate packet
+                                flags=ack_flag,
+                                window_size=default_receiver_window
                             )
-                            sock.sendto(ack_packet, client_address)
-                        else:
-                            # Out-of-order packet (GBN: ignore, wait for expected)
+                            sock.sendto(ack_old_data_packet, client_address)
+                        else: # Out-of-order packet (GBN: server discards it and waits for expected_seq_num)
                             print(f"Server: Received out-of-order DATA (Seq={r_seq}), expected {expected_seq_num}. Discarding.")
-                            # GBN server does not ACK out-of-order packets. Client will timeout.
+                            # Server does NOT send an ACK for out-of-order packets in GBN.
+                            # It will re-send an ACK for the last correctly received in-order packet if client retransmits it.
 
             except socket.timeout:
-                # Server socket doesn't have a timeout in this loop by default
+                # Server socket doesn't have a timeout in this main loop by default
                 pass
             except Exception as e:
                 print(f"Server error: {e}")
@@ -204,72 +204,68 @@ def run_server(ip_address, port, discard_mode):
                     output_file.close()
                 # Consider sending RST if connection was active
                 if connection_active and client_address:
-                    rst_packet = create_packet(server_isn + 1, r_seq if 'r_seq' in locals() else 0, RST_FLAG, 0)
+                    # Use a sequence number for RST, can be server_isn or an increment
+                    rst_packet = create_packet((server_isn + 1) & max_seq_num, r_seq if 'r_seq' in locals() else 0, rst_flag, 0)
                     sock.sendto(rst_packet, client_address)
                     print(f"Server: Sent RST to {client_address} due to error.")
-                connection_active = False
+                connection_active = False # Reset state
                 client_address = None
 
 
-    except OSError as e:
+    except OSError as e: # For socket binding errors etc.
         print(f"Server socket error: {e}")
     finally:
         print("Server shutting down.")
-        sock.close()
+        if sock:
+            sock.close()
 
 def run_client(ip_address, port, filename, window_size_arg):
     """Runs the DRTP client."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.settimeout(DEFAULT_TIMEOUT)
+    sock.settimeout(default_timeout)
     server_address = (ip_address, port)
 
     try:
         # --- Connection Establishment (3-way handshake) ---
-        client_isn = random.randint(1, MAX_SEQ_NUM // 2) # Client's initial sequence number, start at 1
-        current_seq_num = client_isn
-        server_expected_ack_for_syn = current_seq_num # Server should ACK this
+        client_isn = random.randint(1, max_seq_num // 2) # Client's initial sequence number
         
-        print(f"Client: Sending SYN (Seq={current_seq_num}, Wnd={DEFAULT_RECEIVER_WINDOW}) to {server_address}...")
-        syn_packet = create_packet(current_seq_num, 0, SYN_FLAG, DEFAULT_RECEIVER_WINDOW)
+        print(f"Client: Sending SYN (Seq={client_isn}, Wnd={default_receiver_window}) to {server_address}...")
+        syn_packet = create_packet(client_isn, 0, syn_flag, default_receiver_window)
         sock.sendto(syn_packet, server_address)
 
         # Wait for SYN-ACK
         try:
-            packet, _ = sock.recvfrom(HEADER_SIZE + MAX_PAYLOAD_SIZE)
+            packet, _ = sock.recvfrom(header_size + max_payload_size) # Server might send payload with SYN-ACK
             r_seq, r_ack, r_flags, r_wnd, _ = parse_packet(packet)
 
-            if r_flags & SYN_FLAG and r_flags & ACK_FLAG and r_ack == server_expected_ack_for_syn:
+            if r_flags & syn_flag and r_flags & ack_flag and r_ack == client_isn:
                 print(f"Client: Received SYN-ACK (Seq={r_seq}, Ack={r_ack}, Wnd={r_wnd})")
                 server_isn = r_seq # Server's ISN
 
                 # Send ACK for SYN-ACK
-                # Client's next sequence number for data will be client_isn + 1 (or just 1 as per simplified data seq)
-                # The ACK packet itself will have a sequence number.
-                ack_for_syn_ack_seq = current_seq_num # Can re-use ISN or ISN+1 for this ACK packet's seq
-                                                    # Let's use client_isn for this specific ACK packet's seq_num
-                
-                # The ack_num field in this ACK packet acknowledges the server's SYN packet's sequence number
+                # Client's ACK packet uses its next sequence number, client_isn + 1
+                # It acknowledges server's ISN (r_seq)
+                ack_for_syn_ack_seq = (client_isn + 1) & max_seq_num
                 ack_packet = create_packet(
                     seq_num=ack_for_syn_ack_seq, 
-                    ack_num=server_isn, # Acknowledging server's ISN from SYN-ACK
-                    flags=ACK_FLAG, 
-                    window_size=DEFAULT_RECEIVER_WINDOW
+                    ack_num=server_isn, 
+                    flags=ack_flag, 
+                    window_size=default_receiver_window
                 )
                 sock.sendto(ack_packet, server_address)
                 print(f"Client: Sent ACK for SYN-ACK (Seq={ack_for_syn_ack_seq}, Ack={server_isn}). Connection established.")
                 
                 # Data transfer starts with sequence number 1 as per guideline hint
                 # This means client_isn for handshake is separate from data sequence space.
-                # Or, if client_isn is 0, first data is 1. Let's use a dedicated data sequence counter.
-                data_seq_num_base = 1 
+                current_data_seq_num = 1 
                 
             else:
-                print(f"Client: Handshake failed. Received unexpected packet or flags/ack. Flags={r_flags}, Ack={r_ack}, Expected Ack={server_expected_ack_for_syn}")
-                if r_flags & RST_FLAG: print("Client: Received RST from server.")
-                return
+                print(f"Client: Handshake failed. Received unexpected packet or flags/ack. Flags={hex(r_flags)}, Ack={r_ack}, Expected Ack={client_isn}")
+                if r_flags & rst_flag: print("Client: Received RST from server.")
+                return # Exit client
         except socket.timeout:
             print("Client: Timeout waiting for SYN-ACK. Connection failed.")
-            return
+            return # Exit client
 
         # --- Data Transfer (Go-Back-N like) ---
         print(f"Client: Starting file transfer of '{filename}' with window size {window_size_arg}")
@@ -277,78 +273,83 @@ def run_client(ip_address, port, filename, window_size_arg):
         
         try:
             with open(filename, 'rb') as f:
-                send_base = data_seq_num_base
-                next_seq_num = data_seq_num_base
-                window = [] # Stores (seq_num, packet_data, sent_time)
+                # send_base = current_data_seq_num # For GBN, tracks the oldest unacknowledged packet
+                next_seq_to_send = current_data_seq_num
+                
+                # Window stores dicts: {'seq': sequence_number, 'pkt': packet_bytes, 'time': time_sent}
+                window = [] 
                 
                 file_ended = False
+                last_acked_seq = 0 # Tracks the highest ACK received from server for data
 
                 while True:
                     # Fill window if space available and data exists
                     while len(window) < window_size_arg and not file_ended:
-                        data_chunk = f.read(MAX_PAYLOAD_SIZE)
+                        data_chunk = f.read(max_payload_size)
                         if not data_chunk:
                             file_ended = True
                             break
                         
                         # Packet for data_chunk
                         # ack_num in data packets can be set to server_isn (last thing acked from server)
-                        data_packet = create_packet(next_seq_num, server_isn, 0, DEFAULT_RECEIVER_WINDOW, data_chunk)
-                        window.append({'seq': next_seq_num, 'pkt': data_packet, 'time': 0}) # time will be set on send
-                        next_seq_num = (next_seq_num + 1)
-                        if next_seq_num > MAX_SEQ_NUM: next_seq_num = data_seq_num_base # Wrap around
+                        # or 0 if not actively acknowledging something specific from server in this data packet.
+                        data_packet = create_packet(next_seq_to_send, server_isn, 0, default_receiver_window, data_chunk)
+                        window.append({'seq': next_seq_to_send, 'pkt': data_packet, 'time': 0}) 
+                        
+                        next_seq_to_send = (next_seq_to_send + 1)
+                        if next_seq_to_send > max_seq_num: next_seq_to_send = 1 # Wrap around data seq
 
-                    # Send packets in window that haven't been sent or need resending
+                    # Send packets in window that haven't been sent (time = 0)
                     for i in range(len(window)):
-                        if window[i]['time'] == 0: # Not yet sent or first time for this chunk in window
+                        if window[i]['time'] == 0: 
                            sock.sendto(window[i]['pkt'], server_address)
                            window[i]['time'] = time.time()
-                           # print(f"Client: Sent DATA (Seq={window[i]['seq']})")
+                           # print(f"Client: Sent DATA (Seq={window[i]['seq']})") # Verbose
                     
                     if not window and file_ended: # All packets sent and ACKed
                         break
 
                     # Wait for ACKs or timeout
                     try:
-                        ack_packet_raw, _ = sock.recvfrom(HEADER_SIZE) # Only header for ACK
-                        r_seq, r_ack, r_flags, r_wnd, _ = parse_packet(ack_packet_raw)
+                        ack_packet_raw, _ = sock.recvfrom(header_size) # ACK packets only have header
+                        # Server's ACK packet seq_num is its own, ack_num acknowledges client's data packet seq_num
+                        r_seq_ack, r_ack_ack, r_flags_ack, r_wnd_ack, _ = parse_packet(ack_packet_raw)
 
-                        if r_flags & ACK_FLAG:
-                            # print(f"Client: Received ACK (AckNum={r_ack})")
-                            # GBN: ACK for r_ack means all packets up to r_ack are received
-                            # Our server sends ACK for specific seq_num received
+                        if r_flags_ack & ack_flag:
+                            # print(f"Client: Received ACK (ServerSeq={r_seq_ack}, AckNumForMyData={r_ack_ack})") # Verbose
                             
+                            # In GBN, an ACK for sequence N implies all packets up to N are received.
+                            # Here, server sends ACK for specific r_seq received by it, which is in r_ack_ack.
+                            acked_data_seq = r_ack_ack 
+                            
+                            if acked_data_seq > last_acked_seq or \
+                               (last_acked_seq > max_seq_num - window_size_arg and acked_data_seq < window_size_arg): # Handle wrap-around for comparison
+                                last_acked_seq = acked_data_seq
+                            
+                            # Remove ACKed packets from the window (all up to and including acked_data_seq)
                             new_window = []
-                            acked_upto = -1
                             for pkt_info in window:
-                                if pkt_info['seq'] == r_ack:
-                                    acked_upto = r_ack
-                                    # This packet is ACKed, subsequent ones in GBN are implicitly acked by cumulative.
-                                    # However, our server ACKs individual packets.
-                                    # So, remove only the specifically ACKed packet.
-                                    # For a more GBN-like cumulative ACK, client would update send_base.
-                                    # Let's stick to removing the specific packet acked.
-                                    print(f"Client: DATA (Seq={r_ack}) ACKed.")
+                                # Handle sequence number wrap-around for comparison
+                                if pkt_info['seq'] <= acked_data_seq or \
+                                   (acked_data_seq < window[0]['seq'] and pkt_info['seq'] > window[0]['seq']-window_size_arg) : # If ACK wrapped
+                                    if pkt_info['seq'] == acked_data_seq:
+                                         print(f"Client: DATA (Seq={acked_data_seq}) confirmed ACKed.")
                                 else:
                                     new_window.append(pkt_info)
-                            
                             window = new_window
-                            if acked_upto != -1:
-                                # Update send_base if using cumulative ACKs.
-                                # For individual ACKs, this logic is simpler.
-                                if not window and file_ended: break # All sent and acked
+                            
+                            if not window and file_ended: break 
 
-                        elif r_flags & RST_FLAG:
+                        elif r_flags_ack & rst_flag:
                             print("Client: Received RST from server during data transfer. Aborting.")
-                            return
-
+                            return # Exit client
 
                     except socket.timeout:
-                        print(f"Client: Timeout. Resending window (Base={window[0]['seq'] if window else 'N/A'}).")
+                        print(f"Client: Timeout. Resending window (Oldest unacked Seq={(window[0]['seq'] if window else 'N/A')}).")
                         for i in range(len(window)): # Resend all outstanding packets in the window
                             sock.sendto(window[i]['pkt'], server_address)
                             window[i]['time'] = time.time() # Update sent time
-                            # print(f"Client: Re-sent DATA (Seq={window[i]['seq']})")
+                            # print(f"Client: Re-sent DATA (Seq={window[i]['seq']})") # Verbose
                         if not window and file_ended: # Should not happen if timeout occurred with items in window
                              break
             
@@ -365,73 +366,136 @@ def run_client(ip_address, port, filename, window_size_arg):
 
         except FileNotFoundError:
             print(f"Client: Error - File '{filename}' not found.")
-            return
+            # Send RST if connection was established
+            if 'server_isn' in locals(): # Check if handshake completed
+                 rst_packet = create_packet( (client_isn + 2) & max_seq_num, server_isn, rst_flag, 0)
+                 sock.sendto(rst_packet, server_address)
+            return # Exit client
         except Exception as e:
             print(f"Client: Error during file transfer: {e}")
-            # Consider sending RST
-            rst_packet = create_packet(next_seq_num if 'next_seq_num' in locals() else client_isn, server_isn if 'server_isn' in locals() else 0, RST_FLAG, 0)
-            sock.sendto(rst_packet, server_address)
-            return
+            if 'server_isn' in locals():
+                rst_packet = create_packet( (client_isn + 2) & max_seq_num, server_isn, rst_flag, 0)
+                sock.sendto(rst_packet, server_address)
+            return # Exit client
 
 
         # --- Connection Teardown ---
-        # Client's next sequence number for FIN. Can be next_seq_num or a new one.
-        fin_seq = next_seq_num if 'next_seq_num' in locals() and next_seq_num > data_seq_num_base else data_seq_num_base
-        if file_ended and 'next_seq_num' not in locals() : fin_seq = client_isn +1 # if no data was sent
+        # Client's FIN sequence number can be its next logical sequence, e.g., client_isn + 2, or next data seq
+        fin_seq = ( (client_isn + 2) & max_seq_num ) if not 'next_seq_to_send' in locals() or next_seq_to_send == 1 else next_seq_to_send
 
         print(f"Client: Sending FIN (Seq={fin_seq}) to {server_address}...")
-        fin_packet = create_packet(fin_seq, server_isn, FIN_FLAG, DEFAULT_RECEIVER_WINDOW) # ack_num can be last server_isn
+        # ack_num in FIN can be server_isn or last acked server sequence.
+        fin_packet = create_packet(fin_seq, server_isn if 'server_isn' in locals() else 0, fin_flag, default_receiver_window) 
         sock.sendto(fin_packet, server_address)
 
         try:
-            packet, _ = sock.recvfrom(HEADER_SIZE)
-            r_seq, r_ack, r_flags, r_wnd, _ = parse_packet(packet)
+            # Wait for server's FIN-ACK (or just ACK for our FIN)
+            packet, _ = sock.recvfrom(header_size)
+            r_seq_fin, r_ack_fin, r_flags_fin, r_wnd_fin, _ = parse_packet(packet)
 
-            if r_flags & FIN_FLAG and r_flags & ACK_FLAG and r_ack == fin_seq:
-                print(f"Client: Received FIN-ACK (Seq={r_seq}, Ack={r_ack}). Closing connection.")
-            elif r_flags & ACK_FLAG and r_ack == fin_seq : # Simpler FIN ACK from server
-                print(f"Client: Received ACK for FIN (Seq={r_seq}, Ack={r_ack}). Closing connection.")
+            if (r_flags_fin & fin_flag and r_flags_fin & ack_flag and r_ack_fin == fin_seq) or \
+               (r_flags_fin & ack_flag and r_ack_fin == fin_seq): # Server might just ACK our FIN
+                print(f"Client: Received ACK/FIN-ACK for FIN (ServerSeq={r_seq_fin}, AckForMyFIN={r_ack_fin}). Closing connection.")
             else:
-                print("Client: Did not receive proper FIN-ACK. Closing anyway.")
-                if r_flags & RST_FLAG: print("Client: Received RST from server during teardown.")
+                print(f"Client: Did not receive proper ACK/FIN-ACK (Flags={hex(r_flags_fin)}, Ack={r_ack_fin}, Expected AckForMyFIN={fin_seq}). Closing anyway.")
+                if r_flags_fin & rst_flag: print("Client: Received RST from server during teardown.")
 
         except socket.timeout:
             print("Client: Timeout waiting for FIN-ACK. Closing connection anyway.")
 
-    except OSError as e:
+    except OSError as e: # For socket creation errors etc.
         print(f"Client socket error: {e}")
     except Exception as e:
         print(f"Client general error: {e}")
     finally:
         print("Client shutting down.")
-        sock.close()
+        if sock:
+            sock.close()
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="DRTP File Transfer Application")
-    parser.add_argument("-i", "--ip", type=str, required=True, help="IP address of the server (or client to connect to). For server, IP to bind to.")
-    parser.add_argument("-p", "--port", type=int, required=True, help="Port number.")
+# --- Main execution logic (argparse setup) ---
+# This setup expects -i and -p as global options BEFORE the mode (server/client)
+parser = argparse.ArgumentParser(
+    description="DRTP File Transfer Application",
+    formatter_class=argparse.RawTextHelpFormatter # To better format help text
+)
+parser.add_argument(
+    "-i", "--ip", 
+    type=str, 
+    required=True, 
+    help="IP address.\nFor server: IP to bind to.\nFor client: IP of the server to connect to."
+)
+parser.add_argument(
+    "-p", "--port", 
+    type=int, 
+    required=True, 
+    help="Port number for server to listen on or client to connect to."
+)
 
-    subparsers = parser.add_subparsers(dest="mode", required=True, help="Mode of operation")
+subparsers = parser.add_subparsers(
+    dest="mode", 
+    required=True, 
+    title="Modes of operation",
+    description="Choose to run as 'server' or 'client'.",
+    help="Select mode: 'server' or 'client'"
+)
 
-    # Server mode
-    server_parser = subparsers.add_parser("server", help="Run in server mode")
-    server_parser.add_argument("-d", "--discard", action="store_true", help="Enable packet discard mode for testing (server only).")
-    server_parser.set_defaults(func=lambda args: run_server(args.ip, args.port, args.discard))
+# Server mode sub-parser
+server_parser = subparsers.add_parser(
+    "server", 
+    help="Run in server mode.",
+    description="Starts the DRTP server to receive a file."
+)
+server_parser.add_argument(
+    "-d", "--discard", 
+    action="store_true", 
+    help="Enable server's packet discard mode for testing (randomly drops one ACK)."
+)
+server_parser.set_defaults(func=lambda args_ns: run_server(args_ns.ip, args_ns.port, args_ns.discard)) 
 
-    # Client mode
-    client_parser = subparsers.add_parser("client", help="Run in client mode")
-    client_parser.add_argument("-f", "--file", type=str, required=True, help="Filename to send (client only).")
-    client_parser.add_argument("-w", "--window", type=int, default=5, help="Window size in packets (client only). Default is 5.")
-    client_parser.set_defaults(func=lambda args: run_client(args.ip, args.port, args.file, args.window))
+# Client mode sub-parser
+client_parser = subparsers.add_parser(
+    "client", 
+    help="Run in client mode.",
+    description="Starts the DRTP client to send a file."
+)
+client_parser.add_argument(
+    "-f", "--file", 
+    type=str, 
+    required=True, 
+    help="Filename of the file to send."
+)
+client_parser.add_argument(
+    "-w", "--window", 
+    type=int, 
+    default=5, 
+    help="Client's sending window size in packets (default: 5)."
+)
+client_parser.set_defaults(func=lambda args_ns: run_client(args_ns.ip, args_ns.port, args_ns.file, args_ns.window)) 
+
+try:
+    args_namespace = parser.parse_args() 
     
-    try:
-        args = parser.parse_args()
-        if args.window is not None and args.window < 1: # client specific check
-            parser.error("Window size must be at least 1.")
-        args.func(args)
-    except AttributeError:
+    # Client-specific window size validation (if client mode is chosen)
+    if args_namespace.mode == "client":
+        if not hasattr(args_namespace, 'file'): # Should be caught by required=True
+             parser.error("Client mode requires -f/--file argument.")
+        if hasattr(args_namespace, 'window') and args_namespace.window < 1:
+            parser.error("Window size (-w/--window) must be at least 1 for client mode.")
+    
+    if hasattr(args_namespace, 'func'):
+        args_namespace.func(args_namespace) # Call the appropriate run_server or run_client
+    else:
+        # This case should not be reached if mode is required and subparsers are set up correctly.
+        # However, as a fallback, print help.
+        print("Error: Mode function not found. This indicates an internal setup issue.")
         parser.print_help()
-    except argparse.ArgumentError as e:
-        print(f"Argument error: {e}")
-        parser.print_help()
+
+except argparse.ArgumentError as e: # Catch specific argparse errors
+    print(f"Argument error: {e}")
+    # parser.print_help() # Argparse usually prints help on error automatically
+except SystemExit:
+    # Argparse raises SystemExit for -h or errors, allow it to exit cleanly
+    pass 
+except Exception as e:
+    print(f"An unexpected error occurred at the top level: {e}")
 
