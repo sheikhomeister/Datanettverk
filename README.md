@@ -18,11 +18,10 @@ On both h1 and h2, run: ifconfig
 Step 4: Start the Server on h2
 On h2 terminal, run: python3 application.py -s -i 10.0.1.2 -p 9099
 
-Step 5: Make a test file and start the Client on h1:
-To make a test file (3Kb) on h1 terminal, run: dd if=/dev/zero of=testfile.txt bs=1024 count=3
-To start the Client, run: python3 application.py -c -i 10.0.1.2 -p 9099 -f testfile.txt
+Step 5: Use a testfile (iceland-safiqul.jpg):3
+To start the Client, run: python3 application.py -c -i 10.0.1.2 -p 9099 -f iceland-safiqul.jpg
 
 Step 6: Verify the results 
 On both h1 and h2, run: ls
 
-You are now finished and should get expected result. after you ran "ls" on h2, the Server should save the file as received_file and the Client should have Throughput in bits/s
+You are now finished and should get expected result. after you ran "ls" on h2, the Server should save the file as received_file and the Client should have Throughput in Mbits/s
